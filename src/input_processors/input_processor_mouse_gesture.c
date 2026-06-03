@@ -44,6 +44,15 @@ struct gesture_node {
     const struct gesture_pattern *pattern;
 };
 
+struct gesture_pattern {
+    size_t bindings_len;
+    const struct zmk_behavior_binding *bindings;
+    size_t pattern_len;
+    uint32_t wait_ms;
+    uint32_t tap_ms;
+    const uint8_t *pattern;
+};
+
 struct input_processor_mouse_gesture_data {
     struct k_mutex lock;
     struct k_work_delayable save_work;
@@ -165,15 +174,6 @@ struct mouse_rel_msg {
 };
 
 K_MSGQ_DEFINE(mouse_rel_msgq, sizeof(struct mouse_rel_msg), CONFIG_ZMK_MOUSE_GESTURE_REL_QUEUE_LEN, 4);
-
-struct gesture_pattern {
-    size_t bindings_len;
-    const struct zmk_behavior_binding *bindings;
-    size_t pattern_len;
-    uint32_t wait_ms;
-    uint32_t tap_ms;
-    const uint8_t *pattern;
-};
 
 static void build_gesture_trie(struct input_processor_mouse_gesture_data *data, const struct gesture_pattern *patterns, size_t pattern_count) {
     if (!data->gesture_trie_root) {
