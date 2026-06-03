@@ -493,6 +493,7 @@ static int accumulate_movement_safe(int32_t *accumulator, int32_t delta, const c
 
 static int input_processor_mouse_gesture_handle_event_locked(const struct device *dev,
                                                       struct input_event *event) {
+    const struct input_processor_mouse_gesture_config *config = dev->config;
     struct input_processor_mouse_gesture_data *data = dev->data;
     int64_t current_time = k_uptime_get();
 
