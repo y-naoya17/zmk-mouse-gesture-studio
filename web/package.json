@@ -10,9 +10,9 @@
     "test": "jest"
   },
   "dependencies": {
-    "@cormoran/zmk-studio-react-hook": "github:cormoran/react-zmk-studio#77652d6",
     "@bufbuild/protobuf": "^2.10.1",
-    "@zmkfirmware/zmk-studio-ts-client": "github:cormoran/zmk-studio-ts-client#custom-studio-protocol",
+    "@cormoran/zmk-studio-react-hook": "file:vendor/zmk-studio-react-hook",
+    "@zmkfirmware/zmk-studio-ts-client": "file:vendor/zmk-studio-ts-client",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

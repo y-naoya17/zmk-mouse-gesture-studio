@@ -1,0 +1,20 @@
+{
+  "name": "@zmkfirmware/zmk-studio-ts-client",
+  "version": "0.0.18-custom",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "import": "./lib/index.js"
+    },
+    "./*": {
+      "types": "./lib/*.d.ts",
+      "import": "./lib/*.js"
+    }
+  },
+  "dependencies": {
+    "async-mutex": "^0.5.0",
+    "protobufjs": "^7.3.2",
+    "web-streams-polyfill": "4.0.0"
+  }
+}

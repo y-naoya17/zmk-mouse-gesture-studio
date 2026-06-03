@@ -1,0 +1,21 @@
+{
+  "name": "@cormoran/zmk-studio-react-hook",
+  "version": "0.0.1-custom",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "import": "./lib/index.js"
+    },
+    "./testing": {
+      "types": "./lib/testing/index.d.ts",
+      "import": "./lib/testing/index.js"
+    }
+  },
+  "peerDependencies": {
+    "react": ">=19.0.0"
+  },
+  "dependencies": {
+    "@zmkfirmware/zmk-studio-ts-client": "file:../zmk-studio-ts-client"
+  }
+}
