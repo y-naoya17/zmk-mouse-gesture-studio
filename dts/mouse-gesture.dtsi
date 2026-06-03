@@ -1,0 +1,60 @@
+/*
+ * Copyright (c) 2024 The ZMK Contributors
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
+#include <dt-bindings/zmk/mouse-gesture.h>
+
+/ {
+    /omit-if-no-ref/ zip_mouse_gesture: zip_mouse_gesture {
+        compatible = "zmk,input-processor-mouse-gesture";
+        #input-processor-cells = <0>;
+
+        // stroke-size = <500>;
+        // movement-threshold = <10>;
+        // always-active;
+        // event-code-x = <INPUT_REL_X>;
+        // event-code-y = <INPUT_REL_Y>;
+        // idle-timeout-ms = <150>;
+        // gesture-cooldown-ms = <500>;
+    };
+
+    /omit-if-no-ref/ mouse_gesture: mouse_gesture {
+        compatible = "zmk,behavior-mouse-gesture";
+        #binding-cells = <0>;
+        toggle-mode = "momentary";  // Hold to activate
+    };
+
+    /omit-if-no-ref/ mouse_gesture_toggle: mouse_gesture_toggle {
+        compatible = "zmk,behavior-mouse-gesture";
+        #binding-cells = <0>;
+        toggle-mode = "flip";  // Toggle on/off with each press
+    };
+
+    /omit-if-no-ref/ mouse_gesture_on: mouse_gesture_on {
+        compatible = "zmk,behavior-mouse-gesture";
+        #binding-cells = <0>;
+        toggle-mode = "on";    // Always enable
+    };
+
+    /omit-if-no-ref/ mouse_gesture_off: mouse_gesture_off {
+        compatible = "zmk,behavior-mouse-gesture";
+        #binding-cells = <0>;
+        toggle-mode = "off";   // Always disable
+    };
+
+    /omit-if-no-ref/ mouse_gesture_kp: mouse_gesture_kp {
+        compatible = "zmk,behavior-hold-tap";
+        bindings = <&mouse_gesture>, <&kp>;
+
+        #binding-cells = <2>;
+    };
+
+    /omit-if-no-ref/ mouse_gesture_mkp: mouse_gesture_mkp {
+        compatible = "zmk,behavior-hold-tap";
+        bindings = <&mouse_gesture>, <&mkp>;
+
+        #binding-cells = <2>;
+    };
+};

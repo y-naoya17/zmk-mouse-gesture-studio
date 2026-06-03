@@ -1,0 +1,73 @@
+# Copyright (c) 2024 The ZMK Contributors
+# SPDX-License-Identifier: MIT
+
+description: Mouse Gesture Input Processor
+
+compatible: "zmk,input-processor-mouse-gesture"
+
+properties:
+  "#input-processor-cells":
+    type: int
+    const: 0
+    description: "Number of cells in input processor specifier"
+
+  track-remainders:
+    type: boolean
+    description: "Whether to track remainders"
+
+  stroke-size:
+    type: int
+    default: 200
+    description: "Size of one stroke in a gesture. Note that larger stroke than this value is fine, as duplicate directions will be ignored."
+
+  movement-threshold:
+    type: int
+    default: 0
+    description: "Threshold for each x/y event"
+
+  always-active:
+    type: boolean
+    description: "Keep gesture recognition enabled without requiring activation keys. This is useful for pointing devices dedicated to gestures. When enabled, activation keys such as `&mouse_gesture`, `&mouse_gesture_on`, `&mouse_gesture_off`, and `&mouse_gesture_toggle` will be ignored for this processor."
+
+  event-code-x:
+    type: int
+    description: "Input event code to treat as the relative X axis. Defaults to INPUT_REL_X when omitted."
+
+  event-code-y:
+    type: int
+    description: "Input event code to treat as the relative Y axis. Defaults to INPUT_REL_Y when omitted."
+
+  enable-eager-mode:
+    type: boolean
+    description: "Execute pattern matching in real-time and invoke bindings immediately when gesture pattern is matched. (Duplicate gestures are resolved by invoking after idle timeout, which will be canceled if longer gesture is detected within the timeout, while non-duplicate gestures are invoked immediately.) When disabled, pattern match will only be performed when idle timeout triggers or the activation key is released."
+
+  idle-timeout-ms:
+    type: int
+    default: 150
+    description: "Time in milliseconds to wait for idle before invoking gesture. When set to 0, idle timeout is disabled."
+
+  gesture-cooldown-ms:
+    type: int
+    default: 500
+    description: "Time in milliseconds to stop processing for next gesture after the execution of a gesture. This is useful to prevent unexpected double gestures."
+
+child-binding:
+  description: "Mouse gesture definition"
+  properties:
+    pattern:
+      type: array
+      required: true
+      description: "Array of gesture directions that make up this gesture sequence"
+
+    bindings:
+      type: phandle-array
+      required: true
+      description: "Behaviors to be invoked when this gesture is detected"
+
+    wait-ms:
+      type: int
+      description: "Time in milliseconds to wait between consecutive behavior invocations in the gesture sequence"
+
+    tap-ms:
+      type: int
+      description: "Time in milliseconds between press and release events for each behavior in the gesture sequence"

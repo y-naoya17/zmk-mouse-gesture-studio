@@ -1,0 +1,24 @@
+# Copyright (c) 2024 The ZMK Contributors
+# SPDX-License-Identifier: MIT
+
+description: Mouse Gesture behavior
+
+compatible: "zmk,behavior-mouse-gesture"
+
+include: zero_param.yaml
+
+properties:
+  toggle-mode:
+    type: string
+    default: "flip"
+    enum:
+      - "on"
+      - "off" 
+      - "flip"
+      - "momentary"
+    description: |
+      Sets the toggle mode for the gesture behavior:
+      - "on": Always enable gesture mode
+      - "off": Always disable gesture mode  
+      - "flip": Toggle current state (default)
+      - "momentary": Enable while pressed, disable on release

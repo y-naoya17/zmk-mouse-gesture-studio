@@ -1,0 +1,38 @@
+# Copyright (c) 2024 The ZMK Contributors
+# SPDX-License-Identifier: MIT
+
+config ZMK_MOUSE_GESTURE
+	bool "Enable mouse gesture support"
+	default y
+	depends on ZMK_POINTING
+	help
+	  Enable mouse gesture support for ZMK.
+	  This allows converting sequences of mouse movements into key presses.
+
+config ZMK_MOUSE_GESTURE_EXEC_MAX_EVENTS
+	int "Maximum queued gesture execution events"
+	default 8
+	depends on ZMK_MOUSE_GESTURE
+	range 1 32
+	help
+	  Size of the message queue used for deferred gesture execution. Increase if you see
+	  warnings about "Gesture execution queue full".
+
+config ZMK_MOUSE_GESTURE_REL_QUEUE_LEN
+	int "Maximum queued mouse relative movement events"
+	default 32
+	depends on ZMK_MOUSE_GESTURE
+	range 8 128
+	help
+	  Size of the message queue buffering raw relative mouse movements before they
+	  are processed into gesture sequences.
+
+config ZMK_MOUSE_GESTURE_STUDIO_RPC
+	bool "Enable mouse gesture custom Studio RPC"
+	depends on ZMK_MOUSE_GESTURE
+	depends on ZMK_STUDIO
+
+config ZMK_MOUSE_GESTURE_SETTINGS_SAVE_DEBOUNCE
+	int "Mouse gesture settings save debounce in milliseconds"
+	default 1000
+	depends on ZMK_MOUSE_GESTURE

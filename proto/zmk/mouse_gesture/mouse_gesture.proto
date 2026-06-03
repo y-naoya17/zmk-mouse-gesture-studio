@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package zmk.mouse_gesture;
+
+enum Direction {
+  DIRECTION_UNSPECIFIED = 0;
+  DIRECTION_UP = 1;
+  DIRECTION_DOWN = 2;
+  DIRECTION_LEFT = 4;
+  DIRECTION_RIGHT = 8;
+}
+
+message Binding {
+  uint32 local_id = 1;
+  uint32 param1 = 2;
+  uint32 param2 = 3;
+}
+
+message Gesture {
+  string name = 1;
+  repeated Direction pattern = 2;
+  repeated Binding bindings = 3;
+}
+
+message Config {
+  uint32 stroke_size = 1;
+  uint32 idle_timeout_ms = 2;
+  uint32 gesture_cooldown_ms = 3;
+  uint32 movement_threshold = 4;
+  bool eager_mode = 5;
+  bool always_active = 6;
+  repeated Gesture gestures = 7;
+}
+
+message ListRequest {}
+message ListResponse { Config config = 1; }
+
+message SaveRequest { Config config = 1; }
+message SaveResponse {}
+
+message ResetRequest {}
+message ResetResponse { Config config = 1; }
+
+message ErrorResponse { string message = 1; }
+
+message Request {
+  oneof request_type {
+    ListRequest list = 1;
+    SaveRequest save = 2;
+    ResetRequest reset = 3;
+  }
+}
+
+message Response {
+  oneof response_type {
+    ListResponse list = 1;
+    SaveResponse save = 2;
+    ResetResponse reset = 3;
+    ErrorResponse error = 4;
+  }
+}

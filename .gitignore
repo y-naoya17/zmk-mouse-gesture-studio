@@ -1,0 +1,4 @@
+.vscode/c_cpp_properties.json
+.vscode/settings.json
+web/node_modules/
+web/dist/
