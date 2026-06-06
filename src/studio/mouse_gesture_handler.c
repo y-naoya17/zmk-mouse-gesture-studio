@@ -18,6 +18,20 @@ ZMK_RPC_CUSTOM_SUBSYSTEM(zmk_mouse_gesture, &mouse_gesture_meta,
 
 ZMK_RPC_CUSTOM_SUBSYSTEM_RESPONSE_BUFFER(zmk_mouse_gesture, zmk_mouse_gesture_Response);
 
+static void fill_proto_binding(const struct zmk_mouse_gesture_runtime_binding *src,
+                               zmk_mouse_gesture_Binding *dst) {
+    dst->local_id = src->local_id;
+    dst->param1 = src->param1;
+    dst->param2 = src->param2;
+}
+
+static void fill_runtime_binding(const zmk_mouse_gesture_Binding *src,
+                                 struct zmk_mouse_gesture_runtime_binding *dst) {
+    dst->local_id = src->local_id;
+    dst->param1 = src->param1;
+    dst->param2 = src->param2;
+}
+
 static int fill_proto_config(const struct zmk_mouse_gesture_runtime_config *src,
                              zmk_mouse_gesture_Config *dst) {
     memset(dst, 0, sizeof(*dst));
@@ -39,10 +53,24 @@ static int fill_proto_config(const struct zmk_mouse_gesture_runtime_config *src,
         }
         proto_gesture->bindings_count = gesture->bindings_len;
         for (size_t j = 0; j < gesture->bindings_len; j++) {
-            proto_gesture->bindings[j].local_id = gesture->bindings[j].local_id;
-            proto_gesture->bindings[j].param1 = gesture->bindings[j].param1;
-            proto_gesture->bindings[j].param2 = gesture->bindings[j].param2;
+            fill_proto_binding(&gesture->bindings[j], &proto_gesture->bindings[j]);
         }
+    }
+
+    dst->activation_keys_count = src->activation_key_count;
+    for (size_t i = 0; i < src->activation_key_count; i++) {
+        const struct zmk_mouse_gesture_runtime_activation_key *activation =
+            &src->activation_keys[i];
+        zmk_mouse_gesture_ActivationKey *proto_activation = &dst->activation_keys[i];
+        strncpy(proto_activation->name, activation->name, sizeof(proto_activation->name) - 1);
+        proto_activation->position = activation->position;
+        proto_activation->layer = activation->layer;
+        proto_activation->tapping_term_ms = activation->tapping_term_ms;
+        fill_proto_binding(&activation->tap, &proto_activation->tap);
+        fill_proto_binding(&activation->up, &proto_activation->up);
+        fill_proto_binding(&activation->down, &proto_activation->down);
+        fill_proto_binding(&activation->left, &proto_activation->left);
+        fill_proto_binding(&activation->right, &proto_activation->right);
     }
 
     return 0;
@@ -78,10 +106,23 @@ static int fill_runtime_config(const zmk_mouse_gesture_Config *src,
         }
         gesture->bindings_len = proto_gesture->bindings_count;
         for (size_t j = 0; j < proto_gesture->bindings_count; j++) {
-            gesture->bindings[j].local_id = proto_gesture->bindings[j].local_id;
-            gesture->bindings[j].param1 = proto_gesture->bindings[j].param1;
-            gesture->bindings[j].param2 = proto_gesture->bindings[j].param2;
+            fill_runtime_binding(&proto_gesture->bindings[j], &gesture->bindings[j]);
         }
+    }
+
+    dst->activation_key_count = src->activation_keys_count;
+    for (size_t i = 0; i < src->activation_keys_count; i++) {
+        const zmk_mouse_gesture_ActivationKey *proto_activation = &src->activation_keys[i];
+        struct zmk_mouse_gesture_runtime_activation_key *activation = &dst->activation_keys[i];
+        strncpy(activation->name, proto_activation->name, sizeof(activation->name) - 1);
+        activation->position = proto_activation->position;
+        activation->layer = proto_activation->layer;
+        activation->tapping_term_ms = proto_activation->tapping_term_ms;
+        fill_runtime_binding(&proto_activation->tap, &activation->tap);
+        fill_runtime_binding(&proto_activation->up, &activation->up);
+        fill_runtime_binding(&proto_activation->down, &activation->down);
+        fill_runtime_binding(&proto_activation->left, &activation->left);
+        fill_runtime_binding(&proto_activation->right, &activation->right);
     }
 
     return 0;

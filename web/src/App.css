@@ -132,6 +132,10 @@ h2 {
   background: #1b202a;
 }
 
+.gesture-row.activation-row {
+  grid-template-columns: minmax(180px, 0.8fr) minmax(320px, 1.4fr) minmax(240px, 1fr) auto;
+}
+
 .gesture-name {
   font-size: 20px;
   font-weight: 700;
@@ -146,6 +150,15 @@ h2 {
   color: #9be8ce;
   font-size: 24px;
   letter-spacing: 14px;
+}
+
+.direction-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(140px, 1fr));
+  gap: 8px 14px;
+  color: #9be8ce;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  overflow-wrap: anywhere;
 }
 
 .binding {
@@ -164,6 +177,10 @@ h2 {
   grid-template-columns: repeat(2, minmax(220px, 1fr));
   gap: 18px 22px;
   margin-top: 22px;
+}
+
+.settings-grid.compact {
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
 }
 
 .field label,
@@ -209,6 +226,34 @@ h2 {
   gap: 10px;
 }
 
+.action-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.binding-editor {
+  padding: 14px;
+  border: 1px solid #303744;
+  border-radius: 8px;
+  background: #111720;
+}
+
+.binding-editor h3 {
+  margin: 0 0 12px;
+  font-size: 16px;
+}
+
+.binding-hint {
+  margin: -4px 0 10px;
+  color: #9aa4b2;
+  font-size: 12px;
+}
+
+.binding-editor .field {
+  margin-top: 10px;
+}
+
 .error {
   color: #ff858b;
 }
@@ -224,6 +269,9 @@ h2 {
 
   .header,
   .gesture-row,
+  .gesture-row.activation-row,
+  .action-grid,
+  .settings-grid.compact,
   .settings-grid {
     display: grid;
     grid-template-columns: 1fr;

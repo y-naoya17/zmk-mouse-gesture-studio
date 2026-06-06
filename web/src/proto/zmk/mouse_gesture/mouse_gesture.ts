@@ -41,6 +41,18 @@ export interface Gesture {
   bindings: Binding[];
 }
 
+export interface ActivationKey {
+  name: string;
+  position: number;
+  layer: number;
+  tappingTermMs: number;
+  tap: Binding | undefined;
+  up: Binding | undefined;
+  down: Binding | undefined;
+  left: Binding | undefined;
+  right: Binding | undefined;
+}
+
 export interface Config {
   strokeSize: number;
   idleTimeoutMs: number;
@@ -49,6 +61,7 @@ export interface Config {
   eagerMode: boolean;
   alwaysActive: boolean;
   gestures: Gesture[];
+  activationKeys: ActivationKey[];
 }
 
 export interface ListRequest {
@@ -241,6 +254,160 @@ export const Gesture: MessageFns<Gesture> = {
   },
 };
 
+function createBaseActivationKey(): ActivationKey {
+  return {
+    name: "",
+    position: 0,
+    layer: 0,
+    tappingTermMs: 0,
+    tap: undefined,
+    up: undefined,
+    down: undefined,
+    left: undefined,
+    right: undefined,
+  };
+}
+
+export const ActivationKey: MessageFns<ActivationKey> = {
+  encode(message: ActivationKey, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.name !== "") {
+      writer.uint32(10).string(message.name);
+    }
+    if (message.position !== 0) {
+      writer.uint32(16).uint32(message.position);
+    }
+    if (message.layer !== 0) {
+      writer.uint32(24).uint32(message.layer);
+    }
+    if (message.tappingTermMs !== 0) {
+      writer.uint32(32).uint32(message.tappingTermMs);
+    }
+    if (message.tap !== undefined) {
+      Binding.encode(message.tap, writer.uint32(42).fork()).join();
+    }
+    if (message.up !== undefined) {
+      Binding.encode(message.up, writer.uint32(50).fork()).join();
+    }
+    if (message.down !== undefined) {
+      Binding.encode(message.down, writer.uint32(58).fork()).join();
+    }
+    if (message.left !== undefined) {
+      Binding.encode(message.left, writer.uint32(66).fork()).join();
+    }
+    if (message.right !== undefined) {
+      Binding.encode(message.right, writer.uint32(74).fork()).join();
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): ActivationKey {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const end = length === undefined ? reader.len : reader.pos + length;
+    const message = createBaseActivationKey();
+    while (reader.pos < end) {
+      const tag = reader.uint32();
+      switch (tag >>> 3) {
+        case 1: {
+          if (tag !== 10) {
+            break;
+          }
+
+          message.name = reader.string();
+          continue;
+        }
+        case 2: {
+          if (tag !== 16) {
+            break;
+          }
+
+          message.position = reader.uint32();
+          continue;
+        }
+        case 3: {
+          if (tag !== 24) {
+            break;
+          }
+
+          message.layer = reader.uint32();
+          continue;
+        }
+        case 4: {
+          if (tag !== 32) {
+            break;
+          }
+
+          message.tappingTermMs = reader.uint32();
+          continue;
+        }
+        case 5: {
+          if (tag !== 42) {
+            break;
+          }
+
+          message.tap = Binding.decode(reader, reader.uint32());
+          continue;
+        }
+        case 6: {
+          if (tag !== 50) {
+            break;
+          }
+
+          message.up = Binding.decode(reader, reader.uint32());
+          continue;
+        }
+        case 7: {
+          if (tag !== 58) {
+            break;
+          }
+
+          message.down = Binding.decode(reader, reader.uint32());
+          continue;
+        }
+        case 8: {
+          if (tag !== 66) {
+            break;
+          }
+
+          message.left = Binding.decode(reader, reader.uint32());
+          continue;
+        }
+        case 9: {
+          if (tag !== 74) {
+            break;
+          }
+
+          message.right = Binding.decode(reader, reader.uint32());
+          continue;
+        }
+      }
+      if ((tag & 7) === 4 || tag === 0) {
+        break;
+      }
+      reader.skip(tag & 7);
+    }
+    return message;
+  },
+
+  create(base?: DeepPartial<ActivationKey>): ActivationKey {
+    return ActivationKey.fromPartial(base ?? {});
+  },
+  fromPartial(object: DeepPartial<ActivationKey>): ActivationKey {
+    const message = createBaseActivationKey();
+    message.name = object.name ?? "";
+    message.position = object.position ?? 0;
+    message.layer = object.layer ?? 0;
+    message.tappingTermMs = object.tappingTermMs ?? 0;
+    message.tap = (object.tap !== undefined && object.tap !== null) ? Binding.fromPartial(object.tap) : undefined;
+    message.up = (object.up !== undefined && object.up !== null) ? Binding.fromPartial(object.up) : undefined;
+    message.down = (object.down !== undefined && object.down !== null) ? Binding.fromPartial(object.down) : undefined;
+    message.left = (object.left !== undefined && object.left !== null) ? Binding.fromPartial(object.left) : undefined;
+    message.right = (object.right !== undefined && object.right !== null)
+      ? Binding.fromPartial(object.right)
+      : undefined;
+    return message;
+  },
+};
+
 function createBaseConfig(): Config {
   return {
     strokeSize: 0,
@@ -250,6 +417,7 @@ function createBaseConfig(): Config {
     eagerMode: false,
     alwaysActive: false,
     gestures: [],
+    activationKeys: [],
   };
 }
 
@@ -275,6 +443,9 @@ export const Config: MessageFns<Config> = {
     }
     for (const v of message.gestures) {
       Gesture.encode(v!, writer.uint32(58).fork()).join();
+    }
+    for (const v of message.activationKeys) {
+      ActivationKey.encode(v!, writer.uint32(66).fork()).join();
     }
     return writer;
   },
@@ -342,6 +513,14 @@ export const Config: MessageFns<Config> = {
           message.gestures.push(Gesture.decode(reader, reader.uint32()));
           continue;
         }
+        case 8: {
+          if (tag !== 66) {
+            break;
+          }
+
+          message.activationKeys.push(ActivationKey.decode(reader, reader.uint32()));
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -363,6 +542,7 @@ export const Config: MessageFns<Config> = {
     message.eagerMode = object.eagerMode ?? false;
     message.alwaysActive = object.alwaysActive ?? false;
     message.gestures = object.gestures?.map((e) => Gesture.fromPartial(e)) || [];
+    message.activationKeys = object.activationKeys?.map((e) => ActivationKey.fromPartial(e)) || [];
     return message;
   },
 };

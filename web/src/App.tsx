@@ -6,23 +6,9 @@ import {
   ZMKConnection,
   ZMKCustomSubsystem,
 } from "@cormoran/zmk-studio-react-hook";
-import { Binding, Config, Direction, Gesture, Request, Response } from "./proto/zmk/mouse_gesture/mouse_gesture";
+import { ActivationKey, Binding, Config, Request, Response } from "./proto/zmk/mouse_gesture/mouse_gesture";
 
 const SUBSYSTEM_IDENTIFIER = "zmk_mouse_gesture";
-
-const directionLabels: Record<number, string> = {
-  [Direction.DIRECTION_UP]: "↑",
-  [Direction.DIRECTION_DOWN]: "↓",
-  [Direction.DIRECTION_LEFT]: "←",
-  [Direction.DIRECTION_RIGHT]: "→",
-};
-
-const directionButtons = [
-  { label: "↑", value: Direction.DIRECTION_UP },
-  { label: "↓", value: Direction.DIRECTION_DOWN },
-  { label: "←", value: Direction.DIRECTION_LEFT },
-  { label: "→", value: Direction.DIRECTION_RIGHT },
-];
 
 function defaultConfig(): Config {
   return {
@@ -33,6 +19,7 @@ function defaultConfig(): Config {
     eagerMode: false,
     alwaysActive: false,
     gestures: [],
+    activationKeys: [],
   };
 }
 
@@ -40,19 +27,24 @@ function defaultBinding(): Binding {
   return { localId: 0, param1: 0, param2: 0 };
 }
 
-function defaultGesture(index: number): Gesture {
+function defaultActivationKey(index: number): ActivationKey {
   return {
-    name: `gesture_${index + 1}`,
-    pattern: [Direction.DIRECTION_UP],
-    bindings: [defaultBinding()],
+    name: `key_${index + 1}`,
+    position: 0,
+    layer: 0,
+    tappingTermMs: 200,
+    tap: defaultBinding(),
+    up: defaultBinding(),
+    down: defaultBinding(),
+    left: defaultBinding(),
+    right: defaultBinding(),
   };
 }
 
-function bindingText(gesture: Gesture): string {
-  if (!gesture.bindings.length) return "(no binding)";
-  return gesture.bindings
-    .map((binding) => `local:${binding.localId} p1:${binding.param1} p2:${binding.param2}`)
-    .join(", ");
+function bindingText(binding?: Binding): string {
+  if (!binding) return "(unset)";
+  if (binding.localId === 0 && binding.param1 === 0 && binding.param2 === 0) return "current key";
+  return `local:${binding.localId} p1:${binding.param1} p2:${binding.param2}`;
 }
 
 function App() {
@@ -201,17 +193,17 @@ function MouseGestureStudio() {
 
   const updateConfig = (patch: Partial<Config>) => setConfig({ ...config, ...patch });
 
-  const updateGesture = (index: number, gesture: Gesture) => {
-    const gestures = [...config.gestures];
-    gestures[index] = gesture;
-    updateConfig({ gestures });
+  const updateActivationKey = (index: number, activationKey: ActivationKey) => {
+    const activationKeys = [...config.activationKeys];
+    activationKeys[index] = activationKey;
+    updateConfig({ activationKeys });
   };
 
   return (
     <>
       <section className="panel">
         <div className="panel-head">
-          <h2>Gestures</h2>
+          <h2>Activation Keys</h2>
           <div className="toolbar">
             <button className="button" disabled={isBusy} onClick={reload}>
               ↻ Reload
@@ -221,28 +213,39 @@ function MouseGestureStudio() {
             </button>
             <button
               className="button primary"
-              disabled={isBusy || config.gestures.length >= 16}
+              disabled={isBusy || config.activationKeys.length >= 8}
               onClick={() => {
-                setConfig({ ...config, gestures: [...config.gestures, defaultGesture(config.gestures.length)] });
-                setEditingIndex(config.gestures.length);
+                setConfig({
+                  ...config,
+                  activationKeys: [
+                    ...config.activationKeys,
+                    defaultActivationKey(config.activationKeys.length),
+                  ],
+                });
+                setEditingIndex(config.activationKeys.length);
               }}
             >
-              + Add
+              + Add Key
             </button>
           </div>
         </div>
 
         <div className="gesture-list">
-          {config.gestures.map((gesture, index) => (
-            <div className="gesture-row" key={`${gesture.name}-${index}`}>
+          {config.activationKeys.map((activationKey, index) => (
+            <div className="gesture-row activation-row" key={`${activationKey.name}-${index}`}>
               <div>
-                <div className="gesture-name">{gesture.name || "(unnamed)"}</div>
-                <div className="gesture-id">id {index + 1}</div>
+                <div className="gesture-name">{activationKey.name || "(unnamed)"}</div>
+                <div className="gesture-id">
+                  pos {activationKey.position} / layer {activationKey.layer}
+                </div>
               </div>
-              <div className="arrows">
-                {gesture.pattern.map((direction) => directionLabels[direction] ?? "?").join("")}
+              <div className="direction-summary">
+                <span>↑ {bindingText(activationKey.up)}</span>
+                <span>↓ {bindingText(activationKey.down)}</span>
+                <span>← {bindingText(activationKey.left)}</span>
+                <span>→ {bindingText(activationKey.right)}</span>
               </div>
-              <div className="binding">{bindingText(gesture)}</div>
+              <div className="binding">tap {bindingText(activationKey.tap)}</div>
               <div className="row-actions">
                 <button className="button" onClick={() => setEditingIndex(editingIndex === index ? null : index)}>
                   Edit
@@ -250,14 +253,21 @@ function MouseGestureStudio() {
                 <button
                   className="button danger"
                   onClick={() =>
-                    updateConfig({ gestures: config.gestures.filter((_, gestureIndex) => gestureIndex !== index) })
+                    updateConfig({
+                      activationKeys: config.activationKeys.filter(
+                        (_, activationIndex) => activationIndex !== index,
+                      ),
+                    })
                   }
                 >
                   Delete
                 </button>
               </div>
               {editingIndex === index && (
-                <GestureEditor gesture={gesture} onChange={(next) => updateGesture(index, next)} />
+                <ActivationKeyEditor
+                  activationKey={activationKey}
+                  onChange={(next) => updateActivationKey(index, next)}
+                />
               )}
             </div>
           ))}
@@ -296,42 +306,79 @@ function MouseGestureStudio() {
   );
 }
 
-function GestureEditor({ gesture, onChange }: { gesture: Gesture; onChange: (gesture: Gesture) => void }) {
-  const binding = gesture.bindings[0] ?? defaultBinding();
-  const setBinding = (patch: Partial<Binding>) => onChange({ ...gesture, bindings: [{ ...binding, ...patch }] });
+function ActivationKeyEditor({
+  activationKey,
+  onChange,
+}: {
+  activationKey: ActivationKey;
+  onChange: (activationKey: ActivationKey) => void;
+}) {
+  const updateBinding = (key: "tap" | "up" | "down" | "left" | "right", binding: Binding) => {
+    onChange({ ...activationKey, [key]: binding });
+  };
 
   return (
     <div className="editor">
       <label>
         Name
-        <input value={gesture.name} onChange={(event) => onChange({ ...gesture, name: event.target.value })} />
+        <input
+          value={activationKey.name}
+          onChange={(event) => onChange({ ...activationKey, name: event.target.value })}
+        />
       </label>
-      <div>
-        <label>Pattern</label>
-        <div className="direction-buttons">
-          {directionButtons.map((direction) => (
-            <button
-              className="button"
-              key={direction.value}
-              disabled={gesture.pattern.length >= 8}
-              onClick={() => onChange({ ...gesture, pattern: [...gesture.pattern, direction.value] })}
-            >
-              {direction.label}
-            </button>
-          ))}
-          <button className="button" onClick={() => onChange({ ...gesture, pattern: gesture.pattern.slice(0, -1) })}>
-            Backspace
-          </button>
-          <button className="button" onClick={() => onChange({ ...gesture, pattern: [] })}>
-            Clear
-          </button>
-        </div>
+      <div className="settings-grid compact">
+        <NumberField
+          label="Key position"
+          value={activationKey.position}
+          onChange={(position) => onChange({ ...activationKey, position })}
+        />
+        <NumberField
+          label="Layer"
+          value={activationKey.layer}
+          onChange={(layer) => onChange({ ...activationKey, layer })}
+        />
+        <NumberField
+          label="Tapping term (ms)"
+          value={activationKey.tappingTermMs}
+          onChange={(tappingTermMs) => onChange({ ...activationKey, tappingTermMs })}
+        />
       </div>
-      <div className="settings-grid">
-        <NumberField label="Behavior local id" value={binding.localId} onChange={(localId) => setBinding({ localId })} />
-        <NumberField label="Param 1" value={binding.param1} onChange={(param1) => setBinding({ param1 })} />
-        <NumberField label="Param 2" value={binding.param2} onChange={(param2) => setBinding({ param2 })} />
+      <div className="action-grid">
+        <BindingEditor
+          label="Tap"
+          binding={activationKey.tap ?? defaultBinding()}
+          onChange={(binding) => updateBinding("tap", binding)}
+          emptyLabel="current key"
+        />
+        <BindingEditor label="↑ Up" binding={activationKey.up ?? defaultBinding()} onChange={(binding) => updateBinding("up", binding)} />
+        <BindingEditor label="↓ Down" binding={activationKey.down ?? defaultBinding()} onChange={(binding) => updateBinding("down", binding)} />
+        <BindingEditor label="← Left" binding={activationKey.left ?? defaultBinding()} onChange={(binding) => updateBinding("left", binding)} />
+        <BindingEditor label="→ Right" binding={activationKey.right ?? defaultBinding()} onChange={(binding) => updateBinding("right", binding)} />
       </div>
+    </div>
+  );
+}
+
+function BindingEditor({
+  label,
+  binding,
+  onChange,
+  emptyLabel = "no-op",
+}: {
+  label: string;
+  binding: Binding;
+  onChange: (binding: Binding) => void;
+  emptyLabel?: string;
+}) {
+  const setBinding = (patch: Partial<Binding>) => onChange({ ...binding, ...patch });
+
+  return (
+    <div className="binding-editor">
+      <h3>{label}</h3>
+      <p className="binding-hint">0 / 0 / 0 = {emptyLabel}</p>
+      <NumberField label="Behavior local id" value={binding.localId} onChange={(localId) => setBinding({ localId })} />
+      <NumberField label="Param 1" value={binding.param1} onChange={(param1) => setBinding({ param1 })} />
+      <NumberField label="Param 2" value={binding.param2} onChange={(param2) => setBinding({ param2 })} />
     </div>
   );
 }

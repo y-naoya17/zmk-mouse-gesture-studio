@@ -24,6 +24,7 @@
 #include <zmk/behavior.h>
 #include <zmk/behavior_queue.h>
 #include <drivers/behavior.h>
+#include <zmk/events/position_state_changed.h>
 #include <zmk/events/mouse_gesture_state_changed.h>
 #include <zmk/mouse_gesture/runtime.h>
 
@@ -37,7 +38,8 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define MAX_GESTURE_TRIE_NODES (MAX_GESTURE_PATTERNS * MAX_GESTURE_SEQUENCE_LENGTH + 1)
 #define MOUSE_GESTURE_SETTINGS_KEY "mouse_gesture/config"
 #define MOUSE_GESTURE_SETTINGS_MAGIC 0x4d475354
-#define MOUSE_GESTURE_SETTINGS_VERSION 1
+#define MOUSE_GESTURE_SETTINGS_VERSION 2
+#define MOUSE_GESTURE_ACTIVATION_KEY_NONE UINT8_MAX
 
 struct gesture_node {
     struct gesture_node *child[4];
@@ -51,6 +53,18 @@ struct gesture_pattern {
     uint32_t wait_ms;
     uint32_t tap_ms;
     const uint8_t *pattern;
+};
+
+struct runtime_activation_key {
+    char name[ZMK_MOUSE_GESTURE_RUNTIME_NAME_LEN];
+    uint32_t position;
+    uint8_t layer;
+    uint32_t tapping_term_ms;
+    struct zmk_behavior_binding tap;
+    struct zmk_behavior_binding up;
+    struct zmk_behavior_binding down;
+    struct zmk_behavior_binding left;
+    struct zmk_behavior_binding right;
 };
 
 struct input_processor_mouse_gesture_data {
@@ -86,6 +100,17 @@ struct input_processor_mouse_gesture_data {
     bool runtime_enable_eager_mode;
     bool runtime_always_active;
     uint32_t runtime_idle_timeout_ms;
+
+    struct runtime_activation_key
+        runtime_activation_keys[ZMK_MOUSE_GESTURE_RUNTIME_MAX_ACTIVATION_KEYS];
+    uint8_t runtime_activation_key_count;
+    uint8_t active_activation_key_index;
+    bool activation_key_pending;
+    bool activation_key_held;
+    uint32_t activation_key_position;
+    int64_t activation_key_timestamp;
+    struct zmk_behavior_binding activation_key_tap_binding;
+    struct k_work_delayable activation_hold_work;
 };
 
 struct persisted_binding {
@@ -102,6 +127,18 @@ struct persisted_gesture {
     struct persisted_binding bindings[ZMK_MOUSE_GESTURE_RUNTIME_MAX_BINDINGS];
 };
 
+struct persisted_activation_key {
+    char name[ZMK_MOUSE_GESTURE_RUNTIME_NAME_LEN];
+    uint32_t position;
+    uint8_t layer;
+    uint32_t tapping_term_ms;
+    struct persisted_binding tap;
+    struct persisted_binding up;
+    struct persisted_binding down;
+    struct persisted_binding left;
+    struct persisted_binding right;
+};
+
 struct persisted_config {
     uint32_t magic;
     uint16_t version;
@@ -113,6 +150,8 @@ struct persisted_config {
     bool always_active;
     uint8_t gesture_count;
     struct persisted_gesture gestures[ZMK_MOUSE_GESTURE_RUNTIME_MAX_GESTURES];
+    uint8_t activation_key_count;
+    struct persisted_activation_key activation_keys[ZMK_MOUSE_GESTURE_RUNTIME_MAX_ACTIVATION_KEYS];
 };
 
 static struct gesture_node *allocate_gesture_node(struct input_processor_mouse_gesture_data *data) {
@@ -155,6 +194,9 @@ K_MSGQ_DEFINE(gesture_exec_msgq, sizeof(struct gesture_exec_msg), CONFIG_ZMK_MOU
 /* Forward declaration for locked event handler */
 static int input_processor_mouse_gesture_handle_event_locked(const struct device *dev,
                                                              struct input_event *event);
+static const struct device *get_primary_mouse_gesture_dev(void);
+static void activation_hold_work_handler(struct k_work *work);
+static void deactivate_activation_key_locked(struct input_processor_mouse_gesture_data *data);
 
 static void gesture_exec_work_cb(struct k_work *work);
 static K_WORK_DEFINE(gesture_exec_work, gesture_exec_work_cb);
@@ -376,6 +418,31 @@ static void idle_timeout_work_handler(struct k_work *work) {
     }
 }
 
+static int queue_binding_tap(const struct zmk_behavior_binding *binding, uint32_t position,
+                             int64_t timestamp) {
+    if (!binding || !binding->behavior_dev) {
+        return -EINVAL;
+    }
+
+    struct zmk_behavior_binding_event event = {
+        .position = position,
+        .timestamp = timestamp,
+#if IS_ENABLED(CONFIG_ZMK_SPLIT)
+        .source = ZMK_POSITION_STATE_CHANGE_SOURCE_LOCAL,
+#endif
+    };
+
+    int ret = zmk_behavior_queue_add(&event, *binding, true, 0);
+    if (ret < 0) {
+        return ret;
+    }
+    return zmk_behavior_queue_add(&event, *binding, false, CONFIG_ZMK_MACRO_DEFAULT_TAP_MS);
+}
+
+static bool binding_is_empty(const struct zmk_behavior_binding *binding) {
+    return !binding || !binding->behavior_dev;
+}
+
 /* Primary work handler processing message queues */
 static void gesture_exec_work_cb(struct k_work *work) {
     ARG_UNUSED(work);
@@ -491,6 +558,23 @@ static int accumulate_movement_safe(int32_t *accumulator, int32_t delta, const c
     return 0;
 }
 
+static const struct zmk_behavior_binding *
+activation_key_binding_for_direction(const struct runtime_activation_key *activation,
+                                     uint8_t direction) {
+    switch (direction) {
+    case GESTURE_UP:
+        return &activation->up;
+    case GESTURE_DOWN:
+        return &activation->down;
+    case GESTURE_LEFT:
+        return &activation->left;
+    case GESTURE_RIGHT:
+        return &activation->right;
+    default:
+        return NULL;
+    }
+}
+
 static int input_processor_mouse_gesture_handle_event_locked(const struct device *dev,
                                                       struct input_event *event) {
     const struct input_processor_mouse_gesture_config *config = dev->config;
@@ -557,6 +641,25 @@ static int input_processor_mouse_gesture_handle_event_locked(const struct device
     uint8_t direction = detect_direction(data->acc_x, data->acc_y);
 
     if (direction != GESTURE_NONE) {
+        if (data->activation_key_held &&
+            data->active_activation_key_index < data->runtime_activation_key_count) {
+            const struct runtime_activation_key *activation =
+                &data->runtime_activation_keys[data->active_activation_key_index];
+            const struct zmk_behavior_binding *binding =
+                activation_key_binding_for_direction(activation, direction);
+            if (binding && binding->behavior_dev) {
+                int ret = queue_binding_tap(binding, data->activation_key_position, current_time);
+                if (ret < 0) {
+                    LOG_WRN("Failed to queue activation direction binding: %d", ret);
+                }
+            }
+            data->last_gesture_time = current_time;
+            data->acc_x = 0;
+            data->acc_y = 0;
+            data->last_direction = direction;
+            return ZMK_INPUT_PROC_CONTINUE;
+        }
+
         // Ignore duplicate direction
         if (data->last_direction == direction) {
             LOG_DBG("Ignoring duplicate direction %d", direction);
@@ -644,6 +747,7 @@ static int input_processor_mouse_gesture_init(const struct device *dev) {
     k_mutex_init(&data->lock);
     k_work_init_delayable(&data->idle_timeout_work, idle_timeout_work_handler);
     k_work_init_delayable(&data->save_work, save_work_handler);
+    k_work_init_delayable(&data->activation_hold_work, activation_hold_work_handler);
     data->dev = dev;
     data->runtime_config_loaded = false;
     data->gesture_nodes_count = 0;
@@ -658,6 +762,12 @@ static int input_processor_mouse_gesture_init(const struct device *dev) {
     data->last_reset_time = k_uptime_get();
 
     data->last_movement_time = 0;
+    data->active_activation_key_index = MOUSE_GESTURE_ACTIVATION_KEY_NONE;
+    data->activation_key_pending = false;
+    data->activation_key_held = false;
+    data->activation_key_position = 0;
+    data->activation_key_timestamp = 0;
+    memset(&data->activation_key_tap_binding, 0, sizeof(data->activation_key_tap_binding));
     rebuild_gesture_trie_locked(dev);
 
     LOG_INF("Mouse gesture input processor init done");
@@ -703,6 +813,108 @@ static int mouse_gesture_state_listener(const zmk_event_t *eh) {
     k_work_submit(&gesture_exec_work);
 
     return ZMK_EV_EVENT_BUBBLE;
+}
+
+static int find_activation_key_index(const struct input_processor_mouse_gesture_data *data,
+                                     uint32_t position) {
+    for (size_t i = 0; i < data->runtime_activation_key_count; i++) {
+        const struct runtime_activation_key *activation = &data->runtime_activation_keys[i];
+        if (activation->position == position && zmk_keymap_layer_active(activation->layer)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void deactivate_activation_key_locked(struct input_processor_mouse_gesture_data *data) {
+    k_work_cancel_delayable(&data->activation_hold_work);
+    data->activation_key_pending = false;
+    data->activation_key_held = false;
+    data->active_activation_key_index = MOUSE_GESTURE_ACTIVATION_KEY_NONE;
+    data->activation_key_position = 0;
+    data->activation_key_timestamp = 0;
+    memset(&data->activation_key_tap_binding, 0, sizeof(data->activation_key_tap_binding));
+    data->is_active = data->dev ? effective_always_active(data->dev) : false;
+    clear_gesture_data_locked(data);
+}
+
+static void activation_hold_work_handler(struct k_work *work) {
+    struct k_work_delayable *delayed_work = k_work_delayable_from_work(work);
+    struct input_processor_mouse_gesture_data *data =
+        CONTAINER_OF(delayed_work, struct input_processor_mouse_gesture_data, activation_hold_work);
+
+    if (!data->dev) {
+        return;
+    }
+
+    if (k_mutex_lock(&data->lock, K_MSEC(50)) == 0) {
+        if (data->activation_key_pending &&
+            data->active_activation_key_index < data->runtime_activation_key_count) {
+            data->activation_key_pending = false;
+            data->activation_key_held = true;
+            data->is_active = true;
+            clear_gesture_data_locked(data);
+        }
+        k_mutex_unlock(&data->lock);
+    }
+}
+
+static int mouse_gesture_activation_key_listener(const zmk_event_t *eh) {
+    struct zmk_position_state_changed *ev = as_zmk_position_state_changed(eh);
+    if (ev == NULL) {
+        return ZMK_EV_EVENT_BUBBLE;
+    }
+
+    const struct device *dev = get_primary_mouse_gesture_dev();
+    if (!dev) {
+        return ZMK_EV_EVENT_BUBBLE;
+    }
+
+    struct input_processor_mouse_gesture_data *data = dev->data;
+    int ret = ZMK_EV_EVENT_BUBBLE;
+
+    if (k_mutex_lock(&data->lock, K_MSEC(50)) < 0) {
+        return ZMK_EV_EVENT_BUBBLE;
+    }
+
+    if (ev->state) {
+        int index = find_activation_key_index(data, ev->position);
+        if (index >= 0 && !data->activation_key_pending && !data->activation_key_held) {
+            const struct runtime_activation_key *activation = &data->runtime_activation_keys[index];
+            data->active_activation_key_index = index;
+            data->activation_key_pending = true;
+            data->activation_key_held = false;
+            data->activation_key_position = ev->position;
+            data->activation_key_timestamp = ev->timestamp;
+            if (binding_is_empty(&activation->tap)) {
+                const struct zmk_behavior_binding *layer_binding =
+                    zmk_keymap_get_layer_binding_at_idx(activation->layer, ev->position);
+                if (layer_binding) {
+                    data->activation_key_tap_binding = *layer_binding;
+                } else {
+                    memset(&data->activation_key_tap_binding, 0,
+                           sizeof(data->activation_key_tap_binding));
+                }
+            } else {
+                data->activation_key_tap_binding = activation->tap;
+            }
+            k_work_reschedule(&data->activation_hold_work, K_MSEC(activation->tapping_term_ms));
+            ret = ZMK_EV_EVENT_CAPTURED;
+        }
+    } else if ((data->activation_key_pending || data->activation_key_held) &&
+               data->activation_key_position == ev->position &&
+               data->active_activation_key_index < data->runtime_activation_key_count) {
+        bool was_held = data->activation_key_held;
+        if (!was_held) {
+            queue_binding_tap(&data->activation_key_tap_binding, ev->position,
+                              data->activation_key_timestamp);
+        }
+        deactivate_activation_key_locked(data);
+        ret = ZMK_EV_EVENT_CAPTURED;
+    }
+
+    k_mutex_unlock(&data->lock);
+    return ret;
 }
 
 static const struct zmk_input_processor_driver_api input_processor_mouse_gesture_driver_api = {
@@ -756,6 +968,8 @@ DT_INST_FOREACH_STATUS_OKAY(MOUSE_GESTURE_INPUT_PROCESSOR_INST)
 // Register event listener
 ZMK_LISTENER(mouse_gesture_input_processor, mouse_gesture_state_listener);
 ZMK_SUBSCRIPTION(mouse_gesture_input_processor, zmk_mouse_gesture_state_changed);
+ZMK_LISTENER(mouse_gesture_activation_keys, mouse_gesture_activation_key_listener);
+ZMK_SUBSCRIPTION(mouse_gesture_activation_keys, zmk_position_state_changed);
 
 static const struct device *get_primary_mouse_gesture_dev(void) {
 #define MOUSE_GESTURE_PRIMARY_DEV(n) DEVICE_DT_INST_GET(n),
@@ -764,6 +978,36 @@ static const struct device *get_primary_mouse_gesture_dev(void) {
         return NULL;
     }
     return devs[0];
+}
+
+static void fill_runtime_binding_from_behavior(const struct zmk_behavior_binding *src,
+                                               struct zmk_mouse_gesture_runtime_binding *dst) {
+    dst->local_id = zmk_behavior_get_local_id(src->behavior_dev);
+    dst->param1 = src->param1;
+    dst->param2 = src->param2;
+}
+
+static int fill_behavior_binding_from_runtime(
+    const struct zmk_mouse_gesture_runtime_binding *src, struct zmk_behavior_binding *dst) {
+    if (src->local_id == 0 && src->param1 == 0 && src->param2 == 0) {
+        memset(dst, 0, sizeof(*dst));
+        return 0;
+    }
+
+    const char *behavior_name = zmk_behavior_find_behavior_name_from_local_id(src->local_id);
+    if (!behavior_name) {
+        return -EINVAL;
+    }
+
+    *dst = (struct zmk_behavior_binding){
+#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_LOCAL_IDS_IN_BINDINGS)
+        .local_id = src->local_id,
+#endif
+        .behavior_dev = behavior_name,
+        .param1 = src->param1,
+        .param2 = src->param2,
+    };
+    return 0;
 }
 
 static int fill_runtime_config_from_effective(const struct device *dev,
@@ -793,11 +1037,24 @@ static int fill_runtime_config_from_effective(const struct device *dev,
         memcpy(gesture->pattern, patterns[i].pattern, gesture->pattern_len);
         gesture->bindings_len = MIN(patterns[i].bindings_len, ZMK_MOUSE_GESTURE_RUNTIME_MAX_BINDINGS);
         for (size_t j = 0; j < gesture->bindings_len; j++) {
-            gesture->bindings[j].local_id =
-                zmk_behavior_get_local_id(patterns[i].bindings[j].behavior_dev);
-            gesture->bindings[j].param1 = patterns[i].bindings[j].param1;
-            gesture->bindings[j].param2 = patterns[i].bindings[j].param2;
+            fill_runtime_binding_from_behavior(&patterns[i].bindings[j], &gesture->bindings[j]);
         }
+    }
+
+    struct input_processor_mouse_gesture_data *data = dev->data;
+    out->activation_key_count = data->runtime_activation_key_count;
+    for (size_t i = 0; i < out->activation_key_count; i++) {
+        const struct runtime_activation_key *src = &data->runtime_activation_keys[i];
+        struct zmk_mouse_gesture_runtime_activation_key *dst = &out->activation_keys[i];
+        strncpy(dst->name, src->name, sizeof(dst->name) - 1);
+        dst->position = src->position;
+        dst->layer = src->layer;
+        dst->tapping_term_ms = src->tapping_term_ms;
+        fill_runtime_binding_from_behavior(&src->tap, &dst->tap);
+        fill_runtime_binding_from_behavior(&src->up, &dst->up);
+        fill_runtime_binding_from_behavior(&src->down, &dst->down);
+        fill_runtime_binding_from_behavior(&src->left, &dst->left);
+        fill_runtime_binding_from_behavior(&src->right, &dst->right);
     }
 
     return 0;
@@ -810,10 +1067,14 @@ static int apply_runtime_config_locked(const struct device *dev,
     if (config->gesture_count > ZMK_MOUSE_GESTURE_RUNTIME_MAX_GESTURES) {
         return -EINVAL;
     }
+    if (config->activation_key_count > ZMK_MOUSE_GESTURE_RUNTIME_MAX_ACTIVATION_KEYS) {
+        return -EINVAL;
+    }
 
     memset(data->runtime_patterns, 0, sizeof(data->runtime_patterns));
     memset(data->runtime_bindings, 0, sizeof(data->runtime_bindings));
     memset(data->runtime_sequences, 0, sizeof(data->runtime_sequences));
+    memset(data->runtime_activation_keys, 0, sizeof(data->runtime_activation_keys));
 
     for (size_t i = 0; i < config->gesture_count; i++) {
         const struct zmk_mouse_gesture_runtime_gesture *src = &config->gestures[i];
@@ -832,20 +1093,11 @@ static int apply_runtime_config_locked(const struct device *dev,
         }
 
         for (size_t j = 0; j < src->bindings_len; j++) {
-            const char *behavior_name =
-                zmk_behavior_find_behavior_name_from_local_id(src->bindings[j].local_id);
-            if (!behavior_name) {
-                return -EINVAL;
+            int rc = fill_behavior_binding_from_runtime(&src->bindings[j],
+                                                        &data->runtime_bindings[i][j]);
+            if (rc < 0) {
+                return rc;
             }
-
-            data->runtime_bindings[i][j] = (struct zmk_behavior_binding){
-#if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_LOCAL_IDS_IN_BINDINGS)
-                .local_id = src->bindings[j].local_id,
-#endif
-                .behavior_dev = behavior_name,
-                .param1 = src->bindings[j].param1,
-                .param2 = src->bindings[j].param2,
-            };
         }
 
         data->runtime_patterns[i] = (struct gesture_pattern){
@@ -865,8 +1117,41 @@ static int apply_runtime_config_locked(const struct device *dev,
     data->runtime_movement_threshold = config->movement_threshold;
     data->runtime_enable_eager_mode = config->enable_eager_mode;
     data->runtime_always_active = config->always_active;
+    for (size_t i = 0; i < config->activation_key_count; i++) {
+        const struct zmk_mouse_gesture_runtime_activation_key *src = &config->activation_keys[i];
+        struct runtime_activation_key *dst = &data->runtime_activation_keys[i];
+        strncpy(dst->name, src->name, sizeof(dst->name) - 1);
+        dst->position = src->position;
+        dst->layer = src->layer;
+        dst->tapping_term_ms = src->tapping_term_ms;
+        if (dst->tapping_term_ms == 0) {
+            dst->tapping_term_ms = 200;
+        }
+        int rc = fill_behavior_binding_from_runtime(&src->tap, &dst->tap);
+        if (rc < 0) {
+            return rc;
+        }
+        rc = fill_behavior_binding_from_runtime(&src->up, &dst->up);
+        if (rc < 0) {
+            return rc;
+        }
+        rc = fill_behavior_binding_from_runtime(&src->down, &dst->down);
+        if (rc < 0) {
+            return rc;
+        }
+        rc = fill_behavior_binding_from_runtime(&src->left, &dst->left);
+        if (rc < 0) {
+            return rc;
+        }
+        rc = fill_behavior_binding_from_runtime(&src->right, &dst->right);
+        if (rc < 0) {
+            return rc;
+        }
+    }
+    data->runtime_activation_key_count = config->activation_key_count;
     data->runtime_config_loaded = true;
     data->is_active = effective_always_active(dev);
+    deactivate_activation_key_locked(data);
     rebuild_gesture_trie_locked(dev);
 
     return 0;
@@ -894,6 +1179,7 @@ static void save_work_handler(struct k_work *work) {
     persisted.enable_eager_mode = current.enable_eager_mode;
     persisted.always_active = current.always_active;
     persisted.gesture_count = current.gesture_count;
+    persisted.activation_key_count = current.activation_key_count;
 
     for (size_t i = 0; i < current.gesture_count; i++) {
         struct persisted_gesture *dst = &persisted.gestures[i];
@@ -907,6 +1193,40 @@ static void save_work_handler(struct k_work *work) {
             dst->bindings[j].param1 = src->bindings[j].param1;
             dst->bindings[j].param2 = src->bindings[j].param2;
         }
+    }
+
+    for (size_t i = 0; i < current.activation_key_count; i++) {
+        struct persisted_activation_key *dst = &persisted.activation_keys[i];
+        const struct zmk_mouse_gesture_runtime_activation_key *src = &current.activation_keys[i];
+        strncpy(dst->name, src->name, sizeof(dst->name) - 1);
+        dst->position = src->position;
+        dst->layer = src->layer;
+        dst->tapping_term_ms = src->tapping_term_ms;
+        dst->tap = (struct persisted_binding){
+            .local_id = src->tap.local_id,
+            .param1 = src->tap.param1,
+            .param2 = src->tap.param2,
+        };
+        dst->up = (struct persisted_binding){
+            .local_id = src->up.local_id,
+            .param1 = src->up.param1,
+            .param2 = src->up.param2,
+        };
+        dst->down = (struct persisted_binding){
+            .local_id = src->down.local_id,
+            .param1 = src->down.param1,
+            .param2 = src->down.param2,
+        };
+        dst->left = (struct persisted_binding){
+            .local_id = src->left.local_id,
+            .param1 = src->left.param1,
+            .param2 = src->left.param2,
+        };
+        dst->right = (struct persisted_binding){
+            .local_id = src->right.local_id,
+            .param1 = src->right.param1,
+            .param2 = src->right.param2,
+        };
     }
 
     int rc = settings_save_one(MOUSE_GESTURE_SETTINGS_KEY, &persisted, sizeof(persisted));
@@ -992,6 +1312,11 @@ static int mouse_gesture_settings_set(const char *name, size_t len, settings_rea
     }
     if (persisted.magic != MOUSE_GESTURE_SETTINGS_MAGIC ||
         persisted.version != MOUSE_GESTURE_SETTINGS_VERSION) {
+        LOG_WRN("Ignoring incompatible mouse gesture settings");
+        return 0;
+    }
+    if (persisted.gesture_count > ZMK_MOUSE_GESTURE_RUNTIME_MAX_GESTURES ||
+        persisted.activation_key_count > ZMK_MOUSE_GESTURE_RUNTIME_MAX_ACTIVATION_KEYS) {
         return -EINVAL;
     }
 
@@ -1003,6 +1328,7 @@ static int mouse_gesture_settings_set(const char *name, size_t len, settings_rea
         .enable_eager_mode = persisted.enable_eager_mode,
         .always_active = persisted.always_active,
         .gesture_count = persisted.gesture_count,
+        .activation_key_count = persisted.activation_key_count,
     };
 
     for (size_t i = 0; i < config.gesture_count; i++) {
@@ -1017,6 +1343,40 @@ static int mouse_gesture_settings_set(const char *name, size_t len, settings_rea
             dst->bindings[j].param1 = src->bindings[j].param1;
             dst->bindings[j].param2 = src->bindings[j].param2;
         }
+    }
+
+    for (size_t i = 0; i < config.activation_key_count; i++) {
+        struct zmk_mouse_gesture_runtime_activation_key *dst = &config.activation_keys[i];
+        const struct persisted_activation_key *src = &persisted.activation_keys[i];
+        strncpy(dst->name, src->name, sizeof(dst->name) - 1);
+        dst->position = src->position;
+        dst->layer = src->layer;
+        dst->tapping_term_ms = src->tapping_term_ms;
+        dst->tap = (struct zmk_mouse_gesture_runtime_binding){
+            .local_id = src->tap.local_id,
+            .param1 = src->tap.param1,
+            .param2 = src->tap.param2,
+        };
+        dst->up = (struct zmk_mouse_gesture_runtime_binding){
+            .local_id = src->up.local_id,
+            .param1 = src->up.param1,
+            .param2 = src->up.param2,
+        };
+        dst->down = (struct zmk_mouse_gesture_runtime_binding){
+            .local_id = src->down.local_id,
+            .param1 = src->down.param1,
+            .param2 = src->down.param2,
+        };
+        dst->left = (struct zmk_mouse_gesture_runtime_binding){
+            .local_id = src->left.local_id,
+            .param1 = src->left.param1,
+            .param2 = src->left.param2,
+        };
+        dst->right = (struct zmk_mouse_gesture_runtime_binding){
+            .local_id = src->right.local_id,
+            .param1 = src->right.param1,
+            .param2 = src->right.param2,
+        };
     }
 
     const struct device *dev = get_primary_mouse_gesture_dev();

@@ -1,5 +1,7 @@
 zmk.mouse_gesture.Gesture.name max_size:24
+zmk.mouse_gesture.ActivationKey.name max_size:24
 zmk.mouse_gesture.ErrorResponse.message max_size:64
 zmk.mouse_gesture.Gesture.pattern max_count:8
 zmk.mouse_gesture.Gesture.bindings max_count:8
 zmk.mouse_gesture.Config.gestures max_count:16
+zmk.mouse_gesture.Config.activation_keys max_count:8

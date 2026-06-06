@@ -22,6 +22,18 @@ message Gesture {
   repeated Binding bindings = 3;
 }
 
+message ActivationKey {
+  string name = 1;
+  uint32 position = 2;
+  uint32 layer = 3;
+  uint32 tapping_term_ms = 4;
+  Binding tap = 5;
+  Binding up = 6;
+  Binding down = 7;
+  Binding left = 8;
+  Binding right = 9;
+}
+
 message Config {
   uint32 stroke_size = 1;
   uint32 idle_timeout_ms = 2;
@@ -30,6 +42,7 @@ message Config {
   bool eager_mode = 5;
   bool always_active = 6;
   repeated Gesture gestures = 7;
+  repeated ActivationKey activation_keys = 8;
 }
 
 message ListRequest {}
